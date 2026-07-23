@@ -11,6 +11,11 @@ type Task = {
   created_at: string;
 };
 
+type ConversationMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
+
 type SpeechRecognitionResultLike = {
   results: { [index: number]: { [index: number]: { transcript: string } } };
 };
@@ -33,6 +38,8 @@ export default function Home() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [listening, setListening] = useState(false);
   const [status, setStatus] = useState("");
+  const [conversation, setConversation] = useState<ConversationMessage[]>([]);
+  const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
 
   const loadTasks = async () => {
     const { data } = await supabase
@@ -48,6 +55,12 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     loadTasks();
   }, []);
+
+  const resetCapture = () => {
+    setConversation([]);
+    setPendingQuestion(null);
+    setStatus("");
+  };
 
   const handleMicClick = () => {
     const win = window as SpeechWindow;
@@ -67,19 +80,38 @@ export default function Home() {
 
     recognition.onresult = async (event) => {
       const transcript = event.results[0][0].transcript;
-      setStatus(`Heard: "${transcript}" — saving...`);
+      setStatus(`Heard: "${transcript}"`);
+
+      const nextConversation: ConversationMessage[] = [
+        ...conversation,
+        { role: "user", content: transcript },
+      ];
+      setConversation(nextConversation);
 
       const res = await fetch("/api/log", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: transcript }),
+        body: JSON.stringify({ messages: nextConversation }),
       });
 
-      if (res.ok) {
+      if (!res.ok) {
+        setStatus("Something went wrong — try again.");
+        return;
+      }
+
+      const result = await res.json();
+
+      if (result.done) {
         setStatus("Saved.");
+        resetCapture();
         loadTasks();
       } else {
-        setStatus("Something went wrong saving that.");
+        setPendingQuestion(result.follow_up_question);
+        setConversation([
+          ...nextConversation,
+          { role: "assistant", content: result.follow_up_question },
+        ]);
+        setStatus("");
       }
     };
 
@@ -94,7 +126,7 @@ export default function Home() {
 
     recognition.start();
     setListening(true);
-    setStatus("Listening...");
+    setStatus(pendingQuestion ? "Listening for your answer..." : "Listening...");
   };
 
   const toggleDone = async (task: Task) => {
@@ -117,6 +149,18 @@ export default function Home() {
       >
         🎤
       </button>
+
+      {pendingQuestion && (
+        <div className="w-full max-w-md bg-amber-50 border border-amber-200 rounded-lg p-4 text-center">
+          <p className="text-sm text-amber-900">{pendingQuestion}</p>
+          <button
+            onClick={resetCapture}
+            className="text-xs text-amber-700 underline mt-2"
+          >
+            Cancel this entry
+          </button>
+        </div>
+      )}
 
       <p className="text-sm text-neutral-600 h-5">{status}</p>
 

@@ -4,11 +4,16 @@ import { supabase } from "@/lib/supabase";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-export async function POST(request: NextRequest) {
-  const { text } = await request.json();
+type ConversationMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
 
-  if (!text || typeof text !== "string") {
-    return NextResponse.json({ error: "Missing text" }, { status: 400 });
+export async function POST(request: NextRequest) {
+  const { messages } = await request.json();
+
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return NextResponse.json({ error: "Missing messages" }, { status: 400 });
   }
 
   const today = new Date().toISOString().split("T")[0];
@@ -16,25 +21,44 @@ export async function POST(request: NextRequest) {
   const response = await anthropic.messages.create({
     model: "claude-haiku-4-5",
     max_tokens: 256,
-    system: `You extract task information from a short spoken note. Today's date is ${today}. If the note mentions a relative date (like "tomorrow" or "Friday"), convert it to an actual calendar date.`,
-    messages: [{ role: "user", content: text }],
+    system: `You are helping capture a task from spoken notes. Today's date is ${today}.
+
+A task is only complete once you know both:
+1. title — a short, clear description of what the task is
+2. due_date — an actual calendar date (YYYY-MM-DD). Convert relative dates ("tomorrow", "Friday") using today's date above.
+
+Read the full conversation so far (it may span multiple turns) and combine everything said into one evolving understanding of the task.
+
+If either piece is still missing or unclear, set status to "needs_info" and ask ONE short, natural, specific follow-up question for exactly what's missing — don't ask about something you already know. If you have both, set status to "complete".`,
+    messages: (messages as ConversationMessage[]).map((m) => ({
+      role: m.role,
+      content: m.content,
+    })),
     output_config: {
       format: {
         type: "json_schema",
         schema: {
           type: "object",
           properties: {
-            title: {
+            status: {
               type: "string",
-              description: "A short, clear task title",
+              enum: ["complete", "needs_info"],
+            },
+            title: {
+              type: ["string", "null"],
+              description: "The task title, or null if not yet known",
             },
             due_date: {
               type: ["string", "null"],
+              description: "ISO date YYYY-MM-DD, or null if not yet known",
+            },
+            follow_up_question: {
+              type: ["string", "null"],
               description:
-                "ISO date YYYY-MM-DD if a date was mentioned, otherwise null",
+                "A short question asking for the missing info, or null if status is complete",
             },
           },
-          required: ["title", "due_date"],
+          required: ["status", "title", "due_date", "follow_up_question"],
           additionalProperties: false,
         },
       },
@@ -50,16 +74,33 @@ export async function POST(request: NextRequest) {
   }
 
   const parsed = JSON.parse(textBlock.text) as {
-    title: string;
+    status: "complete" | "needs_info";
+    title: string | null;
     due_date: string | null;
+    follow_up_question: string | null;
   };
+
+  // Defensive check: never save unless both fields actually made it through,
+  // regardless of what Claude claims its own status is.
+  if (parsed.status !== "complete" || !parsed.title || !parsed.due_date) {
+    return NextResponse.json({
+      done: false,
+      follow_up_question:
+        parsed.follow_up_question ?? "Could you clarify the task?",
+    });
+  }
+
+  const rawInput = (messages as ConversationMessage[])
+    .filter((m) => m.role === "user")
+    .map((m) => m.content)
+    .join(" / ");
 
   const { data, error } = await supabase
     .from("tasks")
     .insert({
       title: parsed.title,
       due_date: parsed.due_date,
-      raw_input: text,
+      raw_input: rawInput,
     })
     .select()
     .single();
@@ -68,5 +109,5 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ task: data });
+  return NextResponse.json({ done: true, task: data });
 }
