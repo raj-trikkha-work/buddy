@@ -20,11 +20,15 @@ type SpeechRecognitionResultLike = {
   results: { [index: number]: { [index: number]: { transcript: string } } };
 };
 
+type SpeechRecognitionErrorLike = {
+  error: string;
+};
+
 type SpeechRecognitionLike = {
   lang: string;
   interimResults: boolean;
   onresult: ((event: SpeechRecognitionResultLike) => void) | null;
-  onerror: (() => void) | null;
+  onerror: ((event: SpeechRecognitionErrorLike) => void) | null;
   onend: (() => void) | null;
   start: () => void;
 };
@@ -115,8 +119,20 @@ export default function Home() {
       }
     };
 
-    recognition.onerror = () => {
-      setStatus("Could not hear you clearly — try again.");
+    recognition.onerror = (event) => {
+      const messages: Record<string, string> = {
+        "not-allowed":
+          "Microphone permission is blocked for this site. Tap the lock icon next to the address bar → Permissions → Microphone → Allow.",
+        "service-not-allowed":
+          "Microphone permission is blocked for this site. Tap the lock icon next to the address bar → Permissions → Microphone → Allow.",
+        "no-speech": "Didn't hear anything — tap the mic and try again.",
+        network: "Network issue reaching the speech service — check your connection and try again.",
+        "audio-capture": "No microphone was found on this device.",
+        aborted: "Listening was interrupted — try again.",
+      };
+      setStatus(
+        messages[event.error] ?? `Voice input error: "${event.error}" — try again.`
+      );
       setListening(false);
     };
 
