@@ -44,6 +44,7 @@ export default function Home() {
   const [status, setStatus] = useState("");
   const [conversation, setConversation] = useState<ConversationMessage[]>([]);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
+  const [typedInput, setTypedInput] = useState("");
 
   const loadTasks = async () => {
     const { data } = await supabase
@@ -66,6 +67,44 @@ export default function Home() {
     setStatus("");
   };
 
+  // Shared by both voice and typed input — either path produces plain text,
+  // which is all this pipeline needs from here on.
+  const submitEntry = async (text: string) => {
+    setStatus(`"${text}"`);
+
+    const nextConversation: ConversationMessage[] = [
+      ...conversation,
+      { role: "user", content: text },
+    ];
+    setConversation(nextConversation);
+
+    const res = await fetch("/api/log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: nextConversation }),
+    });
+
+    if (!res.ok) {
+      setStatus("Something went wrong — try again.");
+      return;
+    }
+
+    const result = await res.json();
+
+    if (result.done) {
+      setStatus("Saved.");
+      resetCapture();
+      loadTasks();
+    } else {
+      setPendingQuestion(result.follow_up_question);
+      setConversation([
+        ...nextConversation,
+        { role: "assistant", content: result.follow_up_question },
+      ]);
+      setStatus("");
+    }
+  };
+
   const handleMicClick = () => {
     const win = window as SpeechWindow;
     const SpeechRecognitionCtor =
@@ -73,7 +112,7 @@ export default function Home() {
 
     if (!SpeechRecognitionCtor) {
       setStatus(
-        "Voice input isn't supported in this browser — try Chrome on Android."
+        "Voice input isn't supported in this browser — type below instead."
       );
       return;
     }
@@ -82,41 +121,9 @@ export default function Home() {
     recognition.lang = "en-US";
     recognition.interimResults = false;
 
-    recognition.onresult = async (event) => {
+    recognition.onresult = (event) => {
       const transcript = event.results[0][0].transcript;
-      setStatus(`Heard: "${transcript}"`);
-
-      const nextConversation: ConversationMessage[] = [
-        ...conversation,
-        { role: "user", content: transcript },
-      ];
-      setConversation(nextConversation);
-
-      const res = await fetch("/api/log", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: nextConversation }),
-      });
-
-      if (!res.ok) {
-        setStatus("Something went wrong — try again.");
-        return;
-      }
-
-      const result = await res.json();
-
-      if (result.done) {
-        setStatus("Saved.");
-        resetCapture();
-        loadTasks();
-      } else {
-        setPendingQuestion(result.follow_up_question);
-        setConversation([
-          ...nextConversation,
-          { role: "assistant", content: result.follow_up_question },
-        ]);
-        setStatus("");
-      }
+      submitEntry(transcript);
     };
 
     recognition.onerror = (event) => {
@@ -126,12 +133,14 @@ export default function Home() {
         "service-not-allowed":
           "Microphone permission is blocked for this site. Tap the lock icon next to the address bar → Permissions → Microphone → Allow.",
         "no-speech": "Didn't hear anything — tap the mic and try again.",
-        network: "Network issue reaching the speech service — check your connection and try again.",
+        network:
+          "Network issue reaching the speech service — check your connection, or type below instead.",
         "audio-capture": "No microphone was found on this device.",
         aborted: "Listening was interrupted — try again.",
       };
       setStatus(
-        messages[event.error] ?? `Voice input error: "${event.error}" — try again.`
+        messages[event.error] ??
+          `Voice input error: "${event.error}" — try again, or type below instead.`
       );
       setListening(false);
     };
@@ -143,6 +152,14 @@ export default function Home() {
     recognition.start();
     setListening(true);
     setStatus(pendingQuestion ? "Listening for your answer..." : "Listening...");
+  };
+
+  const handleTypedSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const text = typedInput.trim();
+    if (!text) return;
+    setTypedInput("");
+    submitEntry(text);
   };
 
   const toggleDone = async (task: Task) => {
@@ -165,6 +182,24 @@ export default function Home() {
       >
         🎤
       </button>
+
+      <form onSubmit={handleTypedSubmit} className="w-full max-w-md flex gap-2">
+        <input
+          type="text"
+          value={typedInput}
+          onChange={(e) => setTypedInput(e.target.value)}
+          placeholder={
+            pendingQuestion ? "Type your answer..." : "...or type a task here"
+          }
+          className="flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-sm bg-white"
+        />
+        <button
+          type="submit"
+          className="rounded-lg bg-neutral-800 text-white text-sm px-4 py-2"
+        >
+          Add
+        </button>
+      </form>
 
       {pendingQuestion && (
         <div className="w-full max-w-md bg-amber-50 border border-amber-200 rounded-lg p-4 text-center">
@@ -206,7 +241,7 @@ export default function Home() {
         ))}
         {tasks.length === 0 && (
           <p className="text-center text-neutral-400 text-sm mt-4">
-            No tasks yet — tap the mic and say one.
+            No tasks yet — tap the mic or type one below.
           </p>
         )}
       </div>
