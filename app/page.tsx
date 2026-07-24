@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 
 type Task = {
@@ -45,6 +46,12 @@ export default function Home() {
   const [conversation, setConversation] = useState<ConversationMessage[]>([]);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const [typedInput, setTypedInput] = useState("");
+  const router = useRouter();
+
+  const handleLogout = async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    router.push("/login");
+  };
 
   const loadTasks = async () => {
     const { data } = await supabase
@@ -172,7 +179,15 @@ export default function Home() {
 
   return (
     <div className="min-h-screen flex flex-col items-center p-6 gap-8 bg-neutral-50">
-      <h1 className="text-2xl font-semibold mt-8">Buddy</h1>
+      <div className="w-full max-w-md flex items-center justify-between mt-8">
+        <h1 className="text-2xl font-semibold">Buddy</h1>
+        <button
+          onClick={handleLogout}
+          className="text-xs text-neutral-400 underline"
+        >
+          Log out
+        </button>
+      </div>
 
       <button
         onClick={handleMicClick}

@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
+import { verifySession } from "@/lib/session";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -10,6 +11,10 @@ type ConversationMessage = {
 };
 
 export async function POST(request: NextRequest) {
+  if (!(await verifySession())) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const { messages } = await request.json();
 
   if (!Array.isArray(messages) || messages.length === 0) {
